@@ -47,14 +47,57 @@ require "tensorrt"
 # Load engine
 engine = TensorRT::Engine.new("model.engine", verbose: false)
 
-# Query engine
-engine.num_io_tensors          # Number of input/output tensors
-engine.get_tensor_name(0)      # Get tensor name by index
-engine.is_input?("input")      # Check if tensor is input
+# Tensor information methods
+engine.num_io_tensors           # Number of input/output tensors
+engine.get_tensor_name(0)       # Get tensor name by index
+engine.is_input?("input")       # Check if tensor is input
 engine.get_tensor_shape("input") # Get tensor shape [1, 3, 640, 640]
 engine.get_tensor_bytes("input") # Get tensor size in bytes
 
-# Set memory addresses and execute
-engine.set_tensor_address("input", device_ptr)
-engine.execute
+# Synchronous inference
+engine.set_tensor_address("input", device_ptr)   # Set tensor memory address
+engine.set_tensor_address("output", device_ptr)  # Set output tensor address
+engine.execute                  # Execute inference (blocking)
+
+# Asynchronous inference
+engine.enqueue                  # Queue inference on stream (non-blocking)
+engine.stream_synchronize       # Wait for stream to complete
+engine.get_stream               # Get CUDA stream handle (uint64)
+```
+
+### Async Inference with CUDA Streams
+
+The engine includes a built-in CUDA stream for asynchronous operations:
+
+```ruby
+# Async inference (non-blocking)
+engine.enqueue                 # Queue inference on stream
+engine.stream_synchronize      # Wait for stream to complete
+
+# Get stream handle (for use with external CUDA operations)
+stream_ptr = engine.get_stream # Returns uint64 stream address
+```
+
+### Pipelined Inference Example
+
+Use async inference to overlap GPU compute with CPU preprocessing:
+
+```ruby
+# Pipeline: while GPU processes image N, CPU prepares image N+1
+current_image = preprocess(image_path)
+
+iterations.times do |i|
+  # Copy to GPU and start async inference
+  copy_to_device_async(current_image, stream)
+  engine.enqueue
+
+  # Prepare next image on CPU while GPU is busy
+  next_image = preprocess(image_path) if i < iterations - 1
+
+  # Wait for inference and get results
+  engine.stream_synchronize
+  outputs = copy_from_device(output_ptr)
+
+  current_image = next_image
+end
 ```

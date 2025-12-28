@@ -1,6 +1,7 @@
 #include <rice/rice.hpp>
 #include <rice/stl.hpp>
 #include <NvInfer.h>
+#include <cuda_runtime.h>
 #include <fstream>
 #include <vector>
 #include <memory>
@@ -35,12 +36,14 @@ private:
     std::unique_ptr<nvinfer1::ICudaEngine> engine;
     std::unique_ptr<nvinfer1::IExecutionContext> context;
     std::vector<void*> bindings;
+    cudaStream_t stream;
 
 public:
     TRTEngine(const std::string& engine_path, bool verbose = false) {
         logger.verbose = verbose;
 
         std::ifstream file(engine_path, std::ios::binary);
+
         if (!file) {
             throw std::runtime_error("Failed to open engine file: " + engine_path);
         }
@@ -53,6 +56,7 @@ public:
         file.read(buffer.data(), size);
 
         runtime.reset(nvinfer1::createInferRuntime(logger));
+
         if (!runtime) {
             throw std::runtime_error("Failed to create TensorRT runtime");
         }
@@ -67,8 +71,20 @@ public:
             throw std::runtime_error("Failed to create execution context");
         }
 
+        cudaError_t err = cudaStreamCreate(&stream);
+        if (err != cudaSuccess) {
+            throw std::runtime_error("Failed to create CUDA stream");
+        }
+
         int num_tensors = engine->getNbIOTensors();
+
         bindings.resize(num_tensors, nullptr);
+    }
+
+    ~TRTEngine() {
+        if (stream) {
+            cudaStreamDestroy(stream);
+        }
     }
 
     int num_io_tensors() const {
@@ -105,7 +121,6 @@ public:
         void* addr = reinterpret_cast<void*>(ptr);
         context->setTensorAddress(name.c_str(), addr);
 
-        // Also store in bindings array for executeV2
         for (int i = 0; i < engine->getNbIOTensors(); i++) {
             if (name == engine->getIOTensorName(i)) {
                 bindings[i] = addr;
@@ -116,6 +131,28 @@ public:
 
     bool execute() {
         return context->executeV2(bindings.data());
+    }
+
+    bool enqueue() {
+        return context->enqueueV3(stream);
+    }
+
+    void memcpy_htod_async(uint64_t dst, const float* src, size_t count) {
+        cudaMemcpyAsync(reinterpret_cast<void*>(dst), src, count * sizeof(float),
+                        cudaMemcpyHostToDevice, stream);
+    }
+
+    void memcpy_dtoh_async(float* dst, uint64_t src, size_t count) {
+        cudaMemcpyAsync(dst, reinterpret_cast<void*>(src), count * sizeof(float),
+                        cudaMemcpyDeviceToHost, stream);
+    }
+
+    void stream_synchronize() {
+        cudaStreamSynchronize(stream);
+    }
+
+    uint64_t get_stream() const {
+        return reinterpret_cast<uint64_t>(stream);
     }
 };
 
@@ -131,5 +168,8 @@ extern "C" void Init_tensorrt_rb() {
         .define_method("get_tensor_shape", &TRTEngine::get_tensor_shape)
         .define_method("get_tensor_bytes", &TRTEngine::get_tensor_bytes)
         .define_method("set_tensor_address", &TRTEngine::set_tensor_address)
-        .define_method("execute", &TRTEngine::execute);
+        .define_method("execute", &TRTEngine::execute)
+        .define_method("enqueue", &TRTEngine::enqueue)
+        .define_method("stream_synchronize", &TRTEngine::stream_synchronize)
+        .define_method("get_stream", &TRTEngine::get_stream);
 }
