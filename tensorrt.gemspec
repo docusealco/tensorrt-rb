@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
 Gem::Specification.new do |spec|
-  spec.name          = "tensorrt-rb"
+  spec.name          = "tensorrt"
   spec.version       = "0.1.0"
-  spec.author        = "Pete Mtasyburka"
+  spec.author        = "Pete Matsyburka"
   spec.email         = ["pete@docuseal.com"]
 
   spec.summary       = "Minimal TensorRT bindings for Ruby using Rice"
@@ -17,6 +17,7 @@ Gem::Specification.new do |spec|
   spec.extensions    = ["ext/tensorrt_rb/extconf.rb"]
 
   spec.add_dependency "rice", ">= 4.7"
+  spec.add_dependency "ffi", "~> 1.0"
 
   spec.add_development_dependency "rake", "~> 13.0"
   spec.add_development_dependency "rake-compiler", "~> 1.2"

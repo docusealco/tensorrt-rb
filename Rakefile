@@ -10,7 +10,7 @@ end
 
 desc "Build and install the gem"
 task :install => :compile do
-  sh "gem build tensorrt-rb.gemspec && gem install tensorrt-rb-*.gem"
+  sh "gem build tensorrt.gemspec && gem install tensorrt-*.gem"
 end
 
 desc "Clean build artifacts"

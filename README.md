@@ -25,8 +25,8 @@ export CUDA_LIB=/usr/local/cuda/lib64
 rake compile
 
 # Or install as gem
-gem build tensorrt-rb.gemspec
-gem install tensorrt-rb-*.gem
+gem build tensorrt.gemspec
+gem install tensorrt-*.gem
 ```
 
 ### Default Library Paths
@@ -41,63 +41,142 @@ gem install tensorrt-rb-*.gem
 
 ## API
 
+### TensorRT::Engine
+
+```ruby
+engine = TensorRT::Engine.new(path, verbose: false)
+
+# Tensor info
+engine.num_io_tensors                  # Number of input/output tensors
+engine.get_tensor_name(index)          # Tensor name by index
+engine.is_input?(name)                 # Check if tensor is input
+engine.get_tensor_shape(name)          # Shape as array [1, 3, 640, 640]
+engine.get_tensor_bytes(name)          # Size in bytes
+
+# Memory binding
+engine.set_tensor_address(name, device_ptr)
+
+# Inference
+engine.execute                         # Synchronous (blocking)
+engine.enqueue                         # Asynchronous (non-blocking)
+
+# Stream management
+engine.get_stream                      # CUDA stream handle (uint64)
+engine.stream_synchronize              # Wait for stream completion
+```
+
+### TensorRT::CUDA
+
+```ruby
+# Memory allocation
+ptr = TensorRT::CUDA.malloc(bytes)
+TensorRT::CUDA.free(ptr)
+
+# Synchronous copy
+TensorRT::CUDA.memcpy_htod(device_ptr, host_ptr, bytes)  # Host → Device
+TensorRT::CUDA.memcpy_dtoh(host_ptr, device_ptr, bytes)  # Device → Host
+
+# Asynchronous copy
+TensorRT::CUDA.memcpy_htod_async(device_ptr, host_ptr, bytes, stream)
+TensorRT::CUDA.memcpy_dtoh_async(host_ptr, device_ptr, bytes, stream)
+
+# Synchronization
+TensorRT::CUDA.synchronize                    # All operations
+TensorRT::CUDA.stream_synchronize(stream)     # Specific stream
+```
+
+## Examples
+
+### Synchronous Inference
+
 ```ruby
 require "tensorrt"
 
-# Load engine
-engine = TensorRT::Engine.new("model.engine", verbose: false)
+engine = TensorRT::Engine.new("model.engine")
 
-# Tensor information methods
-engine.num_io_tensors           # Number of input/output tensors
-engine.get_tensor_name(0)       # Get tensor name by index
-engine.is_input?("input")       # Check if tensor is input
-engine.get_tensor_shape("input") # Get tensor shape [1, 3, 640, 640]
-engine.get_tensor_bytes("input") # Get tensor size in bytes
+# Allocate GPU memory
+input_bytes = engine.get_tensor_bytes("input")
+output_bytes = engine.get_tensor_bytes("output")
+output_size = engine.get_tensor_shape("output").reduce(1, :*)
 
-# Synchronous inference
-engine.set_tensor_address("input", device_ptr)   # Set tensor memory address
-engine.set_tensor_address("output", device_ptr)  # Set output tensor address
-engine.execute                  # Execute inference (blocking)
+input_device = TensorRT::CUDA.malloc(input_bytes)
+output_device = TensorRT::CUDA.malloc(output_bytes)
+engine.set_tensor_address("input", input_device)
+engine.set_tensor_address("output", output_device)
 
-# Asynchronous inference
-engine.enqueue                  # Queue inference on stream (non-blocking)
-engine.stream_synchronize       # Wait for stream to complete
-engine.get_stream               # Get CUDA stream handle (uint64)
+# Prepare input data
+input_data = preprocess_image(image_path)  # Returns Numo::SFloat
+input_host = FFI::MemoryPointer.new(:float, input_data.size)
+input_host.write_bytes(input_data.to_binary)
+
+# Copy input to GPU
+TensorRT::CUDA.memcpy_htod(input_device, input_host, input_bytes)
+
+# Run inference
+engine.execute
+
+# Copy output from GPU
+output_host = FFI::MemoryPointer.new(:float, output_size)
+TensorRT::CUDA.memcpy_dtoh(output_host, output_device, output_bytes)
+output_data = output_host.read_array_of_float(output_size)
+
+# Cleanup
+TensorRT::CUDA.free(input_device)
+TensorRT::CUDA.free(output_device)
 ```
 
-### Async Inference with CUDA Streams
+### Pipelined Async Inference
 
-The engine includes a built-in CUDA stream for asynchronous operations:
-
-```ruby
-# Async inference (non-blocking)
-engine.enqueue                 # Queue inference on stream
-engine.stream_synchronize      # Wait for stream to complete
-
-# Get stream handle (for use with external CUDA operations)
-stream_ptr = engine.get_stream # Returns uint64 stream address
-```
-
-### Pipelined Inference Example
-
-Use async inference to overlap GPU compute with CPU preprocessing:
+Overlap CPU preprocessing with GPU inference for maximum throughput:
 
 ```ruby
-# Pipeline: while GPU processes image N, CPU prepares image N+1
-current_image = preprocess(image_path)
+require "tensorrt"
 
-iterations.times do |i|
-  # Copy to GPU and start async inference
-  copy_to_device_async(current_image, stream)
+engine = TensorRT::Engine.new("model.engine")
+stream = engine.get_stream
+
+# Allocate GPU memory
+input_bytes = engine.get_tensor_bytes("input")
+output_bytes = engine.get_tensor_bytes("output")
+output_size = engine.get_tensor_shape("output").reduce(1, :*)
+
+input_device = TensorRT::CUDA.malloc(input_bytes)
+output_device = TensorRT::CUDA.malloc(output_bytes)
+engine.set_tensor_address("input", input_device)
+engine.set_tensor_address("output", output_device)
+
+# Allocate host buffers
+input_host = FFI::MemoryPointer.new(:float, input_bytes / 4)
+output_host = FFI::MemoryPointer.new(:float, output_size)
+
+# Preload first image
+current_image = preprocess_image(images[0])
+
+images.each_with_index do |image_path, i|
+  # Copy current image to GPU (async)
+  input_host.write_bytes(current_image.to_binary)
+  TensorRT::CUDA.memcpy_htod_async(input_device, input_host, input_bytes, stream)
+
+  # Start async inference
   engine.enqueue
 
-  # Prepare next image on CPU while GPU is busy
-  next_image = preprocess(image_path) if i < iterations - 1
+  # Preprocess next image on CPU while GPU is busy
+  next_image = preprocess_image(images[i + 1]) if i < images.size - 1
 
-  # Wait for inference and get results
+  # Wait for GPU inference to complete
   engine.stream_synchronize
-  outputs = copy_from_device(output_ptr)
+
+  # Copy output from GPU
+  TensorRT::CUDA.memcpy_dtoh(output_host, output_device, output_bytes)
+  output_data = output_host.read_array_of_float(output_size)
+
+  # Process results
+  process_detections(output_data)
 
   current_image = next_image
 end
+
+# Cleanup
+TensorRT::CUDA.free(input_device)
+TensorRT::CUDA.free(output_device)
 ```
