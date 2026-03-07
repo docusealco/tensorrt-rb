@@ -29,9 +29,13 @@ public:
     }
 };
 
+static TRTLogger& get_logger() {
+    static TRTLogger instance;
+    return instance;
+}
+
 class TRTEngine {
 private:
-    TRTLogger logger;
     std::unique_ptr<nvinfer1::IRuntime> runtime;
     std::unique_ptr<nvinfer1::ICudaEngine> engine;
     std::unique_ptr<nvinfer1::IExecutionContext> context;
@@ -40,6 +44,7 @@ private:
 
 public:
     TRTEngine(const std::string& engine_path, bool verbose = false) {
+        auto& logger = get_logger();
         logger.verbose = verbose;
 
         std::ifstream file(engine_path, std::ios::binary);
