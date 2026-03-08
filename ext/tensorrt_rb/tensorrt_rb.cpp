@@ -136,6 +136,22 @@ public:
         return bytes;
     }
 
+    std::string get_tensor_dtype(const std::string& name) const {
+        auto dtype = engine->getTensorDataType(name.c_str());
+        switch (dtype) {
+            case nvinfer1::DataType::kFLOAT: return "float32";
+            case nvinfer1::DataType::kHALF: return "float16";
+            case nvinfer1::DataType::kBF16: return "bfloat16";
+            case nvinfer1::DataType::kINT64: return "int64";
+            case nvinfer1::DataType::kINT32: return "int32";
+            case nvinfer1::DataType::kINT8: return "int8";
+            case nvinfer1::DataType::kUINT8: return "uint8";
+            case nvinfer1::DataType::kBOOL: return "bool";
+            case nvinfer1::DataType::kFP8: return "fp8";
+            default: return "unknown";
+        }
+    }
+
     void set_tensor_address(const std::string& name, uint64_t ptr) {
         void* addr = reinterpret_cast<void*>(ptr);
         context->setTensorAddress(name.c_str(), addr);
@@ -186,6 +202,7 @@ extern "C" void Init_tensorrt_rb() {
         .define_method("is_input?", &TRTEngine::is_input)
         .define_method("get_tensor_shape", &TRTEngine::get_tensor_shape)
         .define_method("get_tensor_bytes", &TRTEngine::get_tensor_bytes)
+        .define_method("get_tensor_dtype", &TRTEngine::get_tensor_dtype)
         .define_method("set_tensor_address", &TRTEngine::set_tensor_address)
         .define_method("execute", &TRTEngine::execute)
         .define_method("enqueue", &TRTEngine::enqueue)
