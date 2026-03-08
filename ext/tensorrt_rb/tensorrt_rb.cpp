@@ -115,7 +115,21 @@ public:
 
     size_t get_tensor_bytes(const std::string& name) const {
         auto dims = engine->getTensorShape(name.c_str());
-        size_t bytes = sizeof(float);
+        auto dtype = engine->getTensorDataType(name.c_str());
+        size_t element_size;
+        switch (dtype) {
+            case nvinfer1::DataType::kINT64: element_size = 8; break;
+            case nvinfer1::DataType::kFLOAT:
+            case nvinfer1::DataType::kINT32: element_size = 4; break;
+            case nvinfer1::DataType::kHALF:
+            case nvinfer1::DataType::kBF16: element_size = 2; break;
+            case nvinfer1::DataType::kINT8:
+            case nvinfer1::DataType::kBOOL:
+            case nvinfer1::DataType::kFP8:
+            case nvinfer1::DataType::kUINT8: element_size = 1; break;
+            default: element_size = 4; break;
+        }
+        size_t bytes = element_size;
         for (int i = 0; i < dims.nbDims; i++) {
             bytes *= dims.d[i];
         }
