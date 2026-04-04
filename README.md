@@ -2,31 +2,26 @@
 
 Minimal TensorRT bindings for Ruby using Rice (C++ bindings).
 
-## Requirements
+## Prerequisites
 
+- CUDA and TensorRT must be installed on your system before installing this gem
 - Linux (x86_64 or aarch64)
 - Ruby >= 3.0
-- TensorRT (with headers and libraries)
-- CUDA runtime
-- Rice gem (`gem install rice`)
 
 ## Installation
 
 ```bash
-cd tensorrt-rb
+gem install tensorrt
+```
 
-# Set paths if not in standard locations
+The gem will automatically detect CUDA and TensorRT in standard system paths. If they are installed in non-standard locations, set these environment variables before installing:
+
+```bash
 export TENSORRT_INCLUDE=/path/to/tensorrt/include
 export TENSORRT_LIB=/path/to/tensorrt/lib
 export CUDA_INCLUDE=/usr/local/cuda/include
 export CUDA_LIB=/usr/local/cuda/lib64
-
-# Build
-rake compile
-
-# Or install as gem
-gem build tensorrt.gemspec
-gem install tensorrt-*.gem
+gem install tensorrt
 ```
 
 ### Default Library Paths
